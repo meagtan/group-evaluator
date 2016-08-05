@@ -1,3 +1,22 @@
+;;;; Group evaluator
+
+;;; A monoid is represented as an object containing a monoid presentation in the form of generators, which can be any 
+;;;   s-expression, and relations, which are either expressions (if the expression is taken to evaluate to the identity)
+;;;   or a list of two expressions (if the first expression is taken to evaluate to the second). 
+;;; An expression is simply a list of generators. The identity is represented by the empty list (), and the group product
+;;;   of two expressions is represented by their concatenation, given by the function GROUP-MULTIPLY. The inverse of an 
+;;;   expression, if it exists, is calculated by the function GROUP-INVERT, which returns a list composed of inverses of
+;;;   generators (represented as (- <generator>) if the generator is not itself an inverse). The function EXPRESSION-P
+;;;   returns T for valid expressions in the given monoid.
+;;; A group is a particular type of monoid where every generator is guaranteed to have an inverse. For every generator in
+;;;   a particular presentation of a group, its respective inverse is also considered to be a generator, and for every
+;;;   relation in the group presentation, its respective inverse is considered to be a relation, as well as relations
+;;;   connecting each generator to its inverse.
+;;; The method EVALUATE reduces a given expression as far as possible based on the presentation of the given monoid. In order
+;;;   for that to work, the relations of a given group or monoid are completed using the Knuth-Bendix completion algorithm
+;;;   which converts relations into a confluent term rewriting system. This algorithm is not guaranteed to terminate, as 
+;;;   the problem of evaluating monoid/group expressions is in general undecidable.
+
 (defclass monoid ()
   ((generators :accessor generators :initarg :generators)
    (relations  :accessor relations  :initarg :relations)))
@@ -6,35 +25,38 @@
 
 (defmethod initialize-instance :after ((g group) &key generators relations)
   (let ((inverses (mapcar #'group-invert generators)))
-    ;; adjust for relations describing each inverse
     (nconc (generators g) inverses)
     (nconc (relations g) 
            (mapcar #'group-multiply generators inverses)
            (mapcar #'group-multiply inverses generators)
-           (mapcar #'group-invert (relations g)))
-    (setf (relations g) (knuth-bendix g))))
+           (mapcar #'group-invert (relations g))) ;considers each relation to be a single expression
+    (setf (relations g) (knuth-bendix g)))) ;TODO add this to the initializer of monoid as well
            
 (defmethod evaluate ((m monoid) expr)
   ;; evaluate expr using each relation of group until not applicable
-  (do ((rels (relations m)))
+  (do ((rels (relations m)) new-expr)
       ((null rels) expr)
-      (if (search (car rels) expr)
-          ;; remove each instance of (car rels) in expr
-          ;; might be made more efficient by only appending at the end
-          (do ((i (search (car rels) expr)
-                  (search (car rels) expr)))
-              ((null i)
-               (setf rels (relations m)))
-              (setf expr
-                (append (subseq expr 0 i)
-                        (subseq expr (+ i (length (car rels)))))))
-          (pop rels))))
+      (setf new-expr (reduce-expr expr (car rels)))
+      (if (equal expr new-expr)
+          (pop rels)
+          (setf expr new-expr
+                rels (relations m)))))
+                       
+(defun reduce-expr (expr rel &aux (lhs (first rel)) (rhs (second rel)) (len (length lhs)))
+  "Replace each instance of (FIRST REL) in EXPR with (SECOND REL)."
+  (do ((pos (search lhs expr :test #'equal) 
+            (search lhs expr :test #'equal)))
+      ((null pos) expr)
+      (setf expr
+        (append (subseq expr 0 pos)
+                rhs
+                (subseq expr (+ pos len))))))
   
 (defmethod elements ((m monoid))
   "Return the different elements of M, assumed to be finite, by traversing its Cayley graph."
   (do* ((stack (list NIL) (cdr stack))
         (visited stack))
-       ((null stack) visited)
+       ((null stack) (sort visited (lambda (a b) (shortlex< m a b))))
        (dolist (gen (generators m))
          (let ((new (evaluate m (cons gen (car stack)))))
            (unless (member new visited :test #'equal)
@@ -99,16 +121,6 @@ A rewriting rule is represented as a list of two terms, the LHS and the RHS."
                        unless (equal (first first) new-lhs)
                        do (setf (cdr rest) (cddr rest))
                        finally (setf res (cdr whole)))))))))
-                       
-(defun reduce-expr (expr rel &aux (lhs (first rel)) (rhs (second rel)) (len (length lhs)))
-  "Replace each instance of (FIRST REL) in EXPR with (SECOND REL)."
-  (do ((pos (search lhs expr :test #'equal) 
-            (search lhs expr :test #'equal)))
-      ((null pos) expr)
-      (setf expr
-        (append (subseq expr 0 pos)
-                rhs
-                (subseq expr (+ pos len))))))
                        
 (defun find-overlaps (expr1 expr2 &aux (len1 (length expr1)) (len2 (length expr2)))
   "Return (values A B C) if the arguments are of the form AB and BC or ABC and B, else return NIL."
@@ -192,10 +204,6 @@ A rewriting rule is represented as a list of two terms, the LHS and the RHS."
     :relations '((a a) (b b) (a b a b))))
 
 ;;; Group implementation
-
-;; <generator> ::= <symbol> | "(- " <symbol> ")"
-;; <expression> ::= <generator> | "(" {<generator>} ")"
-;; Every relation is an expression, taken to evaluate to the identity ().
   
 (defmethod expression-p (expr (m monoid))
   "Return T if EXPR is a valid string in M."
