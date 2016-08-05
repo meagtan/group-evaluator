@@ -17,6 +17,17 @@
 ;;;   which converts relations into a confluent term rewriting system. This algorithm is not guaranteed to terminate, as 
 ;;;   the problem of evaluating monoid/group expressions is in general undecidable.
 
+(defpackage :GROUP-EVALUATOR
+  (:use :COMMON-LISP)
+  (:export :MONOID :GROUP
+           :EVALUATE
+           :ELEMENTS
+           :EXPRESSION-P
+           :GROUP-MULTIPLY
+           :GROUP-INVERT))
+
+(in-package :GROUP-EVALUATOR)
+
 (defclass monoid ()
   ((generators :accessor generators :initarg :generators)
    (relations  :accessor relations  :initarg :relations)))
